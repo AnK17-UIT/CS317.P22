@@ -1,28 +1,27 @@
 import pandas as pd
-import numpy as np
 import re
 import nltk
+import os
 from nltk.stem import PorterStemmer, WordNetLemmatizer
 from nltk.corpus import stopwords as nltk_stopwords
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from gensim.models import FastText
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-import config
+import config # Import config đã được viết ra file
 
-# --- Tải tài nguyên NLTK ---
 def download_nltk_resources():
-    resources = {'corpora/wordnet.zip': 'wordnet', 'tokenizers/punkt': 'punkt', 'corpora/stopwords': 'stopwords'}
-    for path, name in resources.items():
-        try:
-            nltk.data.find(path)
-        except LookupError:
-            print(f"Đang tải tài nguyên NLTK: {name}...")
-            nltk.download(name, quiet=True)
-    print("Tất cả tài nguyên NLTK cần thiết đã sẵn sàng.")
+    nltk_download_dir = "/kaggle/working/nltk_data"
+    if not os.path.exists(nltk_download_dir):
+        os.makedirs(nltk_download_dir)
+    if nltk_download_dir not in nltk.data.path:
+        nltk.data.path.append(nltk_download_dir)
+    # print("Đang tải các tài nguyên NLTK (sẽ bỏ qua nếu đã có)...") # Bỏ comment nếu muốn thấy log
+    nltk.download("wordnet", download_dir=nltk_download_dir, quiet=True)
+    nltk.download("punkt", download_dir=nltk_download_dir, quiet=True)
+    nltk.download("stopwords", download_dir=nltk_download_dir, quiet=True)
+    # print("Tất cả tài nguyên NLTK cần thiết đã sẵn sàng.")
 
-# --- Các hàm làm sạch và xử lý văn bản ---
 def clean_text(text):
     if not isinstance(text, str): return ""
     text = text.lower()
@@ -30,93 +29,92 @@ def clean_text(text):
     marks_and_digits = r'''!()-[]{};?@#$%:'"\\,|./^&;*_0123456789'''
     text = ''.join(char for char in text if char not in marks_and_digits)
     unwanted_phrases = ['url', 'privacy policy', 'disclaimer', 'copyright policy']
-    for phrase in unwanted_phrases:
-        text = text.replace(phrase, '')
+    for phrase in unwanted_phrases: text = text.replace(phrase, '')
     return re.sub(r'\s+', ' ', text).strip()
 
-def tokenize_and_process(text, stop_words, processor_func, processor_type):
-    tokens = text.split()
+def tokenize_and_process(text, stop_words_list, processor_func, processor_type):
+    tokens = text.split() # Sử dụng split() mặc định của Python cho tokenization đơn giản
     processed_tokens = []
     for word in tokens:
-        if word not in stop_words and len(word) > 2:
+        if word not in stop_words_list and len(word) > 2: # Bỏ stop words và từ ngắn
             if processor_type == 'stem':
                 processed_tokens.append(processor_func(word))
             elif processor_type == 'lem':
+                # WordNetLemmatizer có thể nhận pos tag, 'v' (verb) là một giả định chung
                 processed_tokens.append(processor_func(word, pos='v'))
     return processed_tokens
 
-# --- Hàm chính để tải và tiền xử lý dữ liệu ---
-def load_and_preprocess_data():
+def load_and_preprocess_for_xgboost():
+    """Tải và tiền xử lý dữ liệu CHỈ cho XGBoost với TF-IDF."""
     download_nltk_resources()
-    
+    print("--- Bắt đầu Tải và Tiền xử lý Dữ liệu cho XGBoost ---")
     try:
         df = pd.read_csv(config.DATA_PATH, on_bad_lines="skip", engine='python')
+        print(f"Đã tải {len(df)} dòng từ {config.DATA_PATH}")
     except FileNotFoundError:
-        raise FileNotFoundError(f"Không tìm thấy file dữ liệu tại: {config.DATA_PATH}")
+        print(f"LỖI: Không tìm thấy file dữ liệu tại '{config.DATA_PATH}'")
+        return None, None, None # Trả về 3 giá trị để phù hợp với hàm gọi
 
-    df = df.fillna('')
+    df = df.fillna('') # Xử lý NaN
     df['case_text_sum'] = df['case_title'] + " " + df['case_text']
     df['clean_text'] = df['case_text_sum'].apply(clean_text)
-    
+
+    # Mã hóa nhãn
     le = LabelEncoder()
     df['case_outcome_num'] = le.fit_transform(df['case_outcome'])
-    num_classes = df['case_outcome_num'].nunique()
-    
-    stop_words_list = nltk_stopwords.words('english')
-    porter_stemmer = PorterStemmer()
-    wordnet_lemmatizer = WordNetLemmatizer()
-    
-    print("Đang xử lý Stemming...")
-    df['tokens_stm'] = df['clean_text'].apply(lambda x: tokenize_and_process(x, stop_words_list, porter_stemmer.stem, 'stem'))
-    df['text_stm_joined'] = df['tokens_stm'].apply(' '.join)
-    
-    print("Đang xử lý Lemmatization...")
-    df['tokens_lem'] = df['clean_text'].apply(lambda x: tokenize_and_process(x, stop_words_list, wordnet_lemmatizer.lemmatize, 'lem'))
-    df['text_lem_joined'] = df['tokens_lem'].apply(' '.join)
-    
-    print("Đã hoàn tất tiền xử lý.")
+    num_classes = len(le.classes_)
+    print(f"Số lượng lớp (num_classes): {num_classes}")
+    # Cập nhật num_class trong XGB_PARAMS nếu chưa khớp (dù sẽ được cập nhật lại trong train)
+    config.XGB_PARAMS['num_class'] = num_classes
+
+
+    # Tiền xử lý văn bản (stemming hoặc lemmatization)
+    stop_words = nltk_stopwords.words('english')
+    if config.TEXT_PROCESSING_TYPE == "stemming":
+        print("Đang xử lý Stemming...")
+        processor = PorterStemmer()
+        processor_type = 'stem'
+        df['tokens'] = df['clean_text'].apply(lambda x: tokenize_and_process(x, stop_words, processor.stem, processor_type))
+    elif config.TEXT_PROCESSING_TYPE == "lemmatization":
+        print("Đang xử lý Lemmatization...")
+        processor = WordNetLemmatizer()
+        processor_type = 'lem'
+        df['tokens'] = df['clean_text'].apply(lambda x: tokenize_and_process(x, stop_words, processor.lemmatize, processor_type))
+    else:
+        raise ValueError(f"Loại tiền xử lý không hợp lệ: {config.TEXT_PROCESSING_TYPE}. Chọn 'stemming' hoặc 'lemmatization'.")
+
+    df['processed_text_joined'] = df['tokens'].apply(' '.join)
+    print("Đã hoàn tất tiền xử lý văn bản.")
     return df, le, num_classes
 
-def get_ml_datasets(df):
-    y = df['case_outcome_num']
-    
-    # Dữ liệu cho LR (Stemming)
-    X_stm_text = df['text_stm_joined']
-    train_stm_text, test_stm_text, y_train_stm, y_test_stm = train_test_split(
-        X_stm_text, y, test_size=config.TEST_SIZE, random_state=config.RANDOM_STATE, stratify=y
-    )
-    
-    # Vectorize cho LR
-    tfidf_vec_stm = TfidfVectorizer(max_features=config.MAX_FEATURES_ML)
-    X_train_stm_tfidf = tfidf_vec_stm.fit_transform(train_stm_text)
-    X_test_stm_tfidf = tfidf_vec_stm.transform(test_stm_text)
-    
-    # Dữ liệu cho LSVC (Lemmatization)
-    X_lem_text = df['text_lem_joined']
-    train_lem_text, test_lem_text, y_train_lem, y_test_lem = train_test_split(
-        X_lem_text, y, test_size=config.TEST_SIZE, random_state=config.RANDOM_STATE, stratify=y
-    )
-    
-    # Vectorize cho LSVC
-    tfidf_vec_lem = TfidfVectorizer(max_features=config.MAX_FEATURES_ML)
-    X_train_lem_tfidf = tfidf_vec_lem.fit_transform(train_lem_text)
-    X_test_lem_tfidf = tfidf_vec_lem.transform(test_lem_text)
-    
-    return (X_train_stm_tfidf, X_test_stm_tfidf, y_train_stm, y_test_stm), \
-           (X_train_lem_tfidf, X_test_lem_tfidf, y_train_lem, y_test_lem)
+def get_tfidf_datasets_for_xgboost(df, le):
+    """Tạo dataset TF-IDF cho XGBoost."""
+    print("--- Tạo Dataset TF-IDF cho XGBoost ---")
+    y_encoded = df['case_outcome_num'] # Nhãn đã được mã hóa
+    X_processed_text = df['processed_text_joined']
 
-def get_cnn_datasets(df):
-    # CNN dùng Lemmatization
-    y = df['case_outcome_num']
-    X_lem_tokens = df['tokens_lem']
-    
-    train_lem_tokens, test_lem_tokens, y_train_lem, y_test_lem = train_test_split(
-        X_lem_tokens, y, test_size=config.TEST_SIZE, random_state=config.RANDOM_STATE, stratify=y
+    # Phân chia dữ liệu
+    X_train_text, X_test_text, y_train_encoded, y_test_encoded = train_test_split(
+        X_processed_text, y_encoded,
+        test_size=config.TEST_SIZE,
+        random_state=config.RANDOM_STATE,
+        stratify=y_encoded # Quan trọng để giữ tỷ lệ lớp
     )
-    
-    # Huấn luyện FastText trên tập train
-    print("Đang huấn luyện FastText model...")
-    ft_model = FastText(sentences=train_lem_tokens, vector_size=config.W2V_SIZE, window=config.W2V_WINDOW, 
-                        min_count=config.W2V_MIN_COUNT, workers=config.W2V_WORKERS, sg=1)
-    
-    return train_lem_tokens, test_lem_tokens, y_train_lem, y_test_lem, ft_model
+
+    # Vector hóa TF-IDF
+    tfidf_vectorizer = TfidfVectorizer(
+        max_features=config.MAX_FEATURES_TFIDF,
+        ngram_range=config.NGRAM_RANGE_TFIDF,
+        min_df=config.MIN_DF_TFIDF,
+        max_df=config.MAX_DF_TFIDF
+    )
+
+    print("Đang fit và transform TF-IDF cho tập huấn luyện...")
+    X_train_tfidf = tfidf_vectorizer.fit_transform(X_train_text)
+    print("Đang transform TF-IDF cho tập kiểm thử...")
+    X_test_tfidf = tfidf_vectorizer.transform(X_test_text)
+
+    print(f"Kích thước X_train_tfidf: {X_train_tfidf.shape}")
+    print(f"Kích thước X_test_tfidf: {X_test_tfidf.shape}")
+
+    return X_train_tfidf, X_test_tfidf, y_train_encoded, y_test_encoded, tfidf_vectorizer
