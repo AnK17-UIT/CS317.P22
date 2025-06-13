@@ -93,7 +93,7 @@ docker-compose up -d prometheus grafana
 ```
 
 - Prometheus: [http://localhost:9090](http://localhost:9090)
-- Grafana: [http://localhost:3000](http://localhost:3000) (login: admin/admin)
+- Grafana: [http://localhost:3000](http://localhost:3000) (login: admin/mlops2025)
 
 Metrics endpoint exposed via `/metrics` on FastAPI.
 
