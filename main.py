@@ -4,9 +4,9 @@ import joblib # Sử dụng joblib để lưu model
 import shutil
 
 # Import các module đã viết ra file
-import config
-from preprocess import load_and_preprocess_for_xgboost
-from train_xgboost import train_xgboost_model_only
+import config_training
+from preprocess_data import load_and_preprocess_for_xgboost
+from training_pipeline.train_model_pipeline import train_xgboost_model_only
 
 def save_xgboost_artifacts_joblib(run_info, le): # Đổi tên hàm
     """Lưu mô hình XGBoost tốt nhất và các artifact cần thiết bằng joblib."""
@@ -16,7 +16,7 @@ def save_xgboost_artifacts_joblib(run_info, le): # Đổi tên hàm
     run_id = run_info.info.run_id
     model_name_from_tag = run_info.data.tags.get('mlflow.runName', 'XGBoost_Run_Unknown')
     # Lấy f1 score từ MLflow metrics, đảm bảo tên metric khớp với tên đã log
-    metric_key_f1 = f'test_f1_macro_{config.TEXT_PROCESSING_TYPE.lower()}' # Sửa lỗi chữ hoa
+    metric_key_f1 = f'test_f1_macro_{config_training.TEXT_PROCESSING_TYPE.lower()}' # Sửa lỗi chữ hoa
     f1_score = run_info.data.metrics.get(metric_key_f1, 0)
 
 
@@ -27,13 +27,13 @@ def save_xgboost_artifacts_joblib(run_info, le): # Đổi tên hàm
     print("="*50 + "\n")
 
     # Tạo lại thư mục lưu trữ
-    if os.path.exists(config.MODEL_SAVE_DIR):
-        shutil.rmtree(config.MODEL_SAVE_DIR)
-    os.makedirs(config.MODEL_SAVE_DIR)
-    print(f"Đã tạo thư mục lưu trữ: {config.MODEL_SAVE_DIR}")
+    if os.path.exists(config_training.MODEL_SAVE_DIR):
+        shutil.rmtree(config_training.MODEL_SAVE_DIR)
+    os.makedirs(config_training.MODEL_SAVE_DIR)
+    print(f"Đã tạo thư mục lưu trữ: {config_training.MODEL_SAVE_DIR}")
 
     # 1. Lưu Label Encoder
-    le_path = os.path.join(config.MODEL_SAVE_DIR, "label_encoder.joblib")
+    le_path = os.path.join(config_training.MODEL_SAVE_DIR, "label_encoder.joblib")
     joblib.dump(le, le_path)
     print(f"Đã lưu Label Encoder vào: {le_path}")
 
@@ -48,13 +48,13 @@ def save_xgboost_artifacts_joblib(run_info, le): # Đổi tên hàm
         return
 
     # 3. Lưu Vectorizer TF-IDF bằng joblib
-    vectorizer_path = os.path.join(config.MODEL_SAVE_DIR, "tfidf_vectorizer.joblib")
+    vectorizer_path = os.path.join(config_training.MODEL_SAVE_DIR, "tfidf_vectorizer.joblib")
     joblib.dump(loaded_tfidf_vectorizer, vectorizer_path)
     print(f"Đã lưu Vectorizer TF-IDF vào: {vectorizer_path}")
 
     # 4. Lưu mô hình XGBoost bằng joblib
     # Đặt tên file rõ ràng là model XGBoost
-    xgboost_model_path = os.path.join(config.MODEL_SAVE_DIR, "xgboost_model.joblib")
+    xgboost_model_path = os.path.join(config_training.MODEL_SAVE_DIR, "xgboost_model.joblib")
     try:
         joblib.dump(loaded_xgboost_model, xgboost_model_path)
         print(f"Đã lưu mô hình XGBoost (dạng joblib) tại: {xgboost_model_path}")
@@ -66,8 +66,8 @@ def save_xgboost_artifacts_joblib(run_info, le): # Đổi tên hàm
 
 def main_xgboost_pipeline_joblib(): # Đổi tên hàm chính
     """Hàm chính điều phối pipeline CHỈ cho XGBoost, lưu bằng joblib."""
-    mlflow.set_experiment(config.MLFLOW_EXPERIMENT_NAME)
-    print(f"MLflow experiment được đặt thành: '{config.MLFLOW_EXPERIMENT_NAME}'")
+    mlflow.set_experiment(config_training.MLFLOW_EXPERIMENT_NAME)
+    print(f"MLflow experiment được đặt thành: '{config_training.MLFLOW_EXPERIMENT_NAME}'")
 
     df_processed, le, num_classes = load_and_preprocess_for_xgboost()
     if df_processed is None or le is None:
@@ -85,10 +85,10 @@ def main_xgboost_pipeline_joblib(): # Đổi tên hàm chính
 
     print("\n--- Tìm kiếm run XGBoost vừa thực hiện để lưu artifacts (joblib) ---")
     try:
-        expected_run_name_part = f"XGBoost_TFIDF_{config.TEXT_PROCESSING_TYPE.capitalize()}"
-        experiment = mlflow.get_experiment_by_name(config.MLFLOW_EXPERIMENT_NAME)
+        expected_run_name_part = f"XGBoost_TFIDF_{config_training.TEXT_PROCESSING_TYPE.capitalize()}"
+        experiment = mlflow.get_experiment_by_name(config_training.MLFLOW_EXPERIMENT_NAME)
         if experiment is None:
-            raise Exception(f"Không tìm thấy experiment: {config.MLFLOW_EXPERIMENT_NAME}")
+            raise Exception(f"Không tìm thấy experiment: {config_training.MLFLOW_EXPERIMENT_NAME}")
 
         xgboost_runs = mlflow.search_runs(
             experiment_ids=[experiment.experiment_id],
@@ -110,7 +110,7 @@ def main_xgboost_pipeline_joblib(): # Đổi tên hàm chính
         print(f"Đã xảy ra lỗi khi tìm kiếm hoặc lưu artifacts của XGBoost (joblib): {e}")
 
     print("\n--- PIPELINE XGBOOST (JOBLIB) ĐÃ HOÀN TẤT! ---")
-    print(f"Model XGBoost và các thành phần đã được lưu (dạng joblib) vào thư mục '{config.MODEL_SAVE_DIR}'.")
+    print(f"Model XGBoost và các thành phần đã được lưu (dạng joblib) vào thư mục '{config_training.MODEL_SAVE_DIR}'.")
     print("Sẵn sàng cho việc đóng gói API và Docker.")
 
 # Chạy pipeline
